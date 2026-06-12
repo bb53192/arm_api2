@@ -62,14 +62,15 @@ JoyCtl::JoyCtl(): Node("joy_ctl")
 
 void JoyCtl::init()
 {
+    // Allow overriding the servo twist topic at launch time, e.g.:
+    //   ros2 run arm_api2 joy_ctl --ros-args -p servo_twist_topic:=/moveit2_simple_iface/servo_twist_cmd
+    this->declare_parameter<std::string>("servo_twist_topic", "/moveit2_iface_node/delta_twist_cmds");
+    std::string servo_twist_topic = this->get_parameter("servo_twist_topic").as_string();
 
-    // publishers
-    cmdVelPub_ 		    = this->create_publisher<geometry_msgs::msg::TwistStamped>("/moveit2_iface_node/delta_twist_cmds", 1); 
+    cmdVelPub_ = this->create_publisher<geometry_msgs::msg::TwistStamped>(servo_twist_topic, 1);
+    joySub_    = this->create_subscription<sensor_msgs::msg::Joy>("/joy", 10, std::bind(&JoyCtl::joy_callback, this, _1));
 
-    // subscribers
-    joySub_ 		    = this->create_subscription<sensor_msgs::msg::Joy>("/joy", 10, std::bind(&JoyCtl::joy_callback, this, _1)); 
-
-    RCLCPP_INFO(this->get_logger(), "Initialized joy_ctl"); 
+    RCLCPP_INFO(this->get_logger(), "Initialized joy_ctl — publishing twist to: %s", servo_twist_topic.c_str());
 }
 
 void JoyCtl::joy_callback(const sensor_msgs::msg::Joy::SharedPtr msg) 

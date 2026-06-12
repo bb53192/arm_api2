@@ -169,10 +169,13 @@ def launch_setup(context, *args, **kwargs):
         launch_nodes_.append(joy_node)
 
         joy_ctl_node = Node(
-            package="arm_api2", 
-            executable="joy_ctl", 
-            output="screen", 
-            parameters = [{"use_sim_time": use_sim_time}]
+            package="arm_api2",
+            executable="joy_ctl",
+            output="screen",
+            parameters=[{
+                "use_sim_time": use_sim_time,
+                "servo_twist_topic": "/moveit2_simple_iface/servo_twist_cmd",
+            }]
         )
 
         launch_nodes_.append(joy_ctl_node)

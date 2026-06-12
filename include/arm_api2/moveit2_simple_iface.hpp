@@ -68,6 +68,10 @@
 #include <moveit/robot_state/robot_state.hpp>
 #include <moveit/planning_interface/planning_interface.hpp>
 #include <pluginlib/class_loader.hpp>
+#include <moveit_servo/utils/datatypes.hpp>
+#include <geometry_msgs/msg/twist_stamped.hpp>
+#include <trajectory_msgs/msg/joint_trajectory.hpp>
+#include <moveit_msgs/msg/servo_status.hpp>
 
 //* msgs
 #include "geometry_msgs/msg/pose_stamped.hpp"
@@ -131,17 +135,20 @@ class m2SimpleIface: public rclcpp::Node
         std::string PLANNING_SCENE; 
         std::string PLANNING_FRAME; 
         std::string MOVE_GROUP_NS; 
-        std::string JOINT_STATES; 
-        int NUM_CART_PTS; 
-        bool ENABLE_SERVO; 
+        std::string JOINT_STATES;
+        int NUM_CART_PTS;
+        bool ENABLE_SERVO;
+        float INIT_VEL_SCALING;
+        float INIT_ACC_SCALING;
 
         /* timers */
         rclcpp::TimerBase::SharedPtr                                        timer_;
 
         /* parameters */
         std::string                                                         config_path; 
-        bool                                                                enable_servo; 
-        float                                                               dt; 
+        bool                                                                enable_servo;
+        bool                                                                eager_execution;
+        float                                                               dt;
         float                                                               max_vel_scaling_factor;
         float                                                               max_acc_scaling_factor;
         
@@ -161,7 +168,10 @@ class m2SimpleIface: public rclcpp::Node
         /* subs */
         rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr        pose_cmd_sub_;
         rclcpp::Subscription<sensor_msgs::msg::JointState>::SharedPtr           joint_state_sub_;
-        rclcpp::Subscription<arm_api2_msgs::msg::CartesianWaypoints>::SharedPtr ctraj_cmd_sub_; 
+        rclcpp::Subscription<arm_api2_msgs::msg::CartesianWaypoints>::SharedPtr ctraj_cmd_sub_;
+        rclcpp::Subscription<geometry_msgs::msg::TwistStamped>::SharedPtr       servo_twist_sub_;
+        rclcpp::Publisher<trajectory_msgs::msg::JointTrajectory>::SharedPtr     servo_trajectory_pub_;
+        rclcpp::Publisher<moveit_msgs::msg::ServoStatus>::SharedPtr             servo_status_pub_;
 
         /* pubs */
         rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr       pose_state_pub_;
@@ -176,8 +186,10 @@ class m2SimpleIface: public rclcpp::Node
         rclcpp::Service<arm_api2_msgs::srv::AddCollisionObject>::SharedPtr       add_collision_object_srv_;
         /* topic callbacks */
         void pose_cmd_cb(const geometry_msgs::msg::PoseStamped::SharedPtr msg);
-        void cart_poses_cb(const arm_api2_msgs::msg::CartesianWaypoints::SharedPtr msg); 
+        void cart_poses_cb(const arm_api2_msgs::msg::CartesianWaypoints::SharedPtr msg);
         void joint_state_cb(const sensor_msgs::msg::JointState::SharedPtr msg);
+        void servo_twist_cb(const geometry_msgs::msg::TwistStamped::SharedPtr msg);
+        void processServoCommand();
         
         /* srv callbacks*/
         void change_state_cb(const std::shared_ptr<arm_api2_msgs::srv::ChangeState::Request> req, 
@@ -203,11 +215,12 @@ class m2SimpleIface: public rclcpp::Node
         void getArmState();  
 
         /* funcs */
-        void execPlan(bool async); 
-        void execMove(bool async);  
-        void execCartesian(bool async); 
-        void planExecCartesian(bool async); 
-        void execTrajectory(moveit_msgs::msg::RobotTrajectory trajectory, bool async); 
+        void execPlan(bool async);
+        void execMove(bool async);
+        void execCartesian(bool async);
+        void planExecCartesian(bool async);
+        void execTrajectory(moveit_msgs::msg::RobotTrajectory trajectory, bool async);
+        bool planWithPlanner(moveit::planning_interface::MoveGroupInterface::Plan &plan, bool eagerExecution = true);
 
         // Simple state machine 
         enum state{
@@ -237,8 +250,12 @@ class m2SimpleIface: public rclcpp::Node
         bool nodeInit           = false; 
         bool recivCmd           = false; 
         bool recivTraj          = false; 
-        bool servoEntered       = false; 
-        bool async              = false; 
+        bool servoEntered       = false;
+        bool async              = false;
+        rclcpp::Time servo_entered_time_;
+        geometry_msgs::msg::TwistStamped latest_twist_cmd_;
+        std::atomic<bool> new_twist_cmd_{false};
+        moveit_servo::KinematicState last_servo_state_;
 
         /* planner info */
         std::string current_planner_id_ = "pilz_industrial_motion_planner";
@@ -262,7 +279,7 @@ class m2SimpleIface: public rclcpp::Node
         std::shared_ptr<planning_scene_monitor::PlanningSceneMonitor> m_pSceneMonitorPtr;
         moveit::planning_interface::PlanningSceneInterface m_planningSceneInterface;
         std::shared_ptr<servo::ParamListener> servo_param_listener_;
-        std::unique_ptr<moveit_servo::Servo> servoPtr; 
+        std::unique_ptr<moveit_servo::Servo> servoPtr;
 
 }; 
 

@@ -40,13 +40,28 @@
  */
 
 #include "arm_api2/arm_joy.hpp"
-#define X_I 4
-#define Y_I 3
-#define YAW_I 6
-#define Z_I 7
 
-// TODO: Add config file to modify this values based on the joystick/robot used
-// TODO: Enable joint space and task space control 
+// ============================================================
+// Joystick layout — change the 6 axis indices here
+// Run `ros2 topic echo /joy --field axes --once` to inspect
+// ============================================================
+static constexpr int AXIS_LIN_X = 0;  // left  stick X  → linear.x
+static constexpr int AXIS_LIN_Y = 1;  // left  stick Y  → linear.y
+static constexpr int AXIS_LIN_Z = 4;  // right stick Y  → linear.z
+static constexpr int AXIS_ANG_X = 0;  // left  stick X  → angular.x (roll)
+static constexpr int AXIS_ANG_Y = 1;  // left  stick Y  → angular.y (pitch)
+static constexpr int AXIS_ANG_Z = 3;  // right stick X  → angular.z (yaw)
+// ============================================================
+static constexpr int   BTN_POSITION     = 5;    // R1  — hold for position mode
+static constexpr int   BTN_ORIENTATION  = 4;    // L1  — hold for orientation mode
+static constexpr int   AXIS_OPEN_GRIPPER  = 5;    // RT (axes[5]) — hold to open
+static constexpr int   AXIS_CLOSE_GRIPPER = 2;    // LT (axes[2]) — hold to close
+static constexpr int   AXIS_DPAD_Y       = 7;     // D-pad up/down → speed scale
+static constexpr float C_LIN             = 0.3f;  // max linear  velocity [m/s]
+static constexpr float C_ANG             = 0.2f;  // max angular velocity [rad/s]
+static constexpr float DEADBAND          = 0.05f;
+static constexpr float GRIPPER_MAX       = 0.035f; // half-gap at full open [m] (slider max 70mm / 2)
+static constexpr float GRIPPER_STEP      = 3.5e-4f; // increment per 20ms tick (~2s full travel)
 
 JoyCtl::JoyCtl(): Node("joy_ctl")
 {
@@ -69,95 +84,70 @@ void JoyCtl::init()
 
     cmdVelPub_ = this->create_publisher<geometry_msgs::msg::TwistStamped>(servo_twist_topic, 1);
     joySub_    = this->create_subscription<sensor_msgs::msg::Joy>("/joy", 10, std::bind(&JoyCtl::joy_callback, this, _1));
+    publish_timer_ = this->create_wall_timer(20ms, std::bind(&JoyCtl::publish_timer_cb, this));
+
+    gripper_pub_ = this->create_publisher<trajectory_msgs::msg::JointTrajectory>(
+        "/gripper_controller/joint_trajectory", 1);
 
     RCLCPP_INFO(this->get_logger(), "Initialized joy_ctl — publishing twist to: %s", servo_twist_topic.c_str());
 }
 
-void JoyCtl::joy_callback(const sensor_msgs::msg::Joy::SharedPtr msg) 
-{   
-	float x_dir, y_dir, z_dir, yaw;  
-	std::vector<float> axes_ = msg->axes; 
-	
-    x_dir = axes_.at(X_I); 
-	y_dir = axes_.at(Y_I); 
-    z_dir = axes_.at(Z_I); 
-	yaw = axes_.at(YAW_I);
+void JoyCtl::joy_callback(const sensor_msgs::msg::Joy::SharedPtr msg)
+{
+    const std::vector<float>& axes = msg->axes;
 
-    // Enabling joystick functionality
-    // R2 pressed --> joy on
-    int LOG_JOY_STATE_T = 5000; 
-    if (msg->buttons.at(5) == 1)
-    { 
-        RCLCPP_INFO_STREAM_THROTTLE(this->get_logger(), clock_, LOG_JOY_STATE_T, "ON");    
-        setEnableJoy(true); 
-    }
+    bool pos_mode = msg->buttons.at(BTN_POSITION)    == 1;
+    bool ori_mode = msg->buttons.at(BTN_ORIENTATION) == 1;
 
-    // R2 released --> joy off
-    if (msg->buttons.at(5) == 0)
-    {
-        
-        RCLCPP_INFO_STREAM_THROTTLE(this->get_logger(), clock_, LOG_JOY_STATE_T, "OFF"); 
-        setEnableJoy(false); 
-    }
-
-    enableJoy_ = getEnableJoy(); 
+    int LOG_T = 5000;
+    if (pos_mode)       RCLCPP_INFO_STREAM_THROTTLE(this->get_logger(), clock_, LOG_T, "Position mode");
+    else if (ori_mode)  RCLCPP_INFO_STREAM_THROTTLE(this->get_logger(), clock_, LOG_T, "Orientation mode");
 
     float sF = getScaleFactor();
-    // https://www.quantstart.com/articles/Passing-By-Reference-To-Const-in-C/ 
-    if (msg->axes.at(1) == 1){
-        
-        if (sF > 0 && sF < 100)
-        {
-          sF += 1; 
-          RCLCPP_INFO_STREAM(this->get_logger(), "Increasing scale factor: " << sF); 
-        }
-        else{sF = 1;}
-    }
-    
-    if (msg->axes.at(1) == -1){
-       if (sF > 0 && sF < 100) 
-       {
-        sF -= 1; 
-        RCLCPP_INFO_STREAM(this->get_logger(), "Decreasing scale factor: " << sF); 
-       }
-       else{sF = 1;}
-    }
+    if (axes.at(AXIS_DPAD_Y) ==  1.0f && sF < 100) { sF += 1; RCLCPP_INFO_STREAM(this->get_logger(), "Scale: " << sF); }
+    if (axes.at(AXIS_DPAD_Y) == -1.0f && sF >   1) { sF -= 1; RCLCPP_INFO_STREAM(this->get_logger(), "Scale: " << sF); }
+    setScaleFactor(sF);
 
-    /*if (msg->buttons.at(4) == 1) {
-       RCLCPP_INFO_STREAM(this->get_logger(), "Calling jingle bells!"); 
-       auto req_ = std::make_shared<std_srvs::srv::Trigger::Request>();
-       jingleBellsClient_->async_send_request(req_); 
-    }*/
-    // Test scale fact (ADD C const to prevent large cmd)
-    setScaleFactor(sF); 
+    auto db = [](float v){ return std::abs(v) < DEADBAND ? 0.0f : v; };
 
-	
-    // Create teleop msg
-    auto teleop_msg 	    = geometry_msgs::msg::TwistStamped(); 
-    teleop_msg.header.stamp = this->get_clock()->now(); 
-    teleop_msg.header.frame_id = "link6"; 
+    last_twist_msg_.header.frame_id = "link6";
+    last_twist_msg_.twist = geometry_msgs::msg::Twist();
 
-    float C = 0.01; 
-    if (enableJoy_){
-        // Currently modified for the PIPER
-        teleop_msg.twist.linear.z = x_dir  * sF * C; 
-        teleop_msg.twist.linear.y  = y_dir  * sF * C;
-        teleop_msg.twist.linear.x = - z_dir * sF * C;  
-        teleop_msg.twist.angular.z 	= yaw  * sF * C; 
-        cmdVelPub_->publish(teleop_msg); 
-    }
-    else{
-        teleop_msg.twist.linear.x = 0;
-        teleop_msg.twist.linear.y = 0;
-        teleop_msg.twist.linear.z = 0; 
-        teleop_msg.twist.angular.z = 0;
-	cmdVelPub_->publish(teleop_msg); 
+    if (pos_mode) {
+        last_twist_msg_.twist.linear.x  =  -db(axes.at(AXIS_LIN_Z)) * sF * C_LIN;
+        last_twist_msg_.twist.linear.y  =  db(axes.at(AXIS_LIN_X)) * sF * C_LIN;
+        last_twist_msg_.twist.linear.z  =  db(axes.at(AXIS_LIN_Y)) * sF * C_LIN;
+    } else if (ori_mode) {
+        last_twist_msg_.twist.angular.x =  db(axes.at(AXIS_ANG_Z)) * sF * C_ANG;
+        last_twist_msg_.twist.angular.y =  db(axes.at(AXIS_ANG_Y)) * sF * C_ANG;
+        last_twist_msg_.twist.angular.z =  db(axes.at(AXIS_ANG_X)) * sF * C_ANG;
     }
 
-
+    // Track gripper trigger state — axes rest at 1.0, pressed toward -1.0
+    // amount = (1 - axis) / 2  →  0.0 at rest, 1.0 fully pressed
+    trig_open_held_  = axes.at(AXIS_OPEN_GRIPPER)  < 0.9f;
+    trig_close_held_ = axes.at(AXIS_CLOSE_GRIPPER) < 0.9f;
 }
 
-// Methods that set scale factor 
+void JoyCtl::publish_timer_cb()
+{
+    last_twist_msg_.header.stamp = this->get_clock()->now();
+    cmdVelPub_->publish(last_twist_msg_);
+
+    // Gripper — accumulate position at 50Hz while button held, then publish JTC
+    if (trig_open_held_)  gripper_pos_ = std::min(gripper_pos_ + GRIPPER_STEP, GRIPPER_MAX);
+    if (trig_close_held_) gripper_pos_ = std::max(gripper_pos_ - GRIPPER_STEP, 0.0f);
+
+    trajectory_msgs::msg::JointTrajectory gtraj;
+    gtraj.joint_names = {"joint7", "joint8"};
+    trajectory_msgs::msg::JointTrajectoryPoint pt;
+    pt.positions = {gripper_pos_, -gripper_pos_};
+    pt.time_from_start = rclcpp::Duration::from_seconds(0.02);
+    gtraj.points.push_back(pt);
+    gripper_pub_->publish(gtraj);
+}
+
+// Methods that set scale factor
 void JoyCtl::setScaleFactor(int value)
 {
     scale_factor = value; 

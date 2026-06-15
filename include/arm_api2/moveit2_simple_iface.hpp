@@ -253,6 +253,7 @@ class m2SimpleIface: public rclcpp::Node
         bool servoEntered       = false;
         bool async              = false;
         rclcpp::Time servo_entered_time_;
+        rclcpp::Time last_twist_cmd_time_;
         geometry_msgs::msg::TwistStamped latest_twist_cmd_;
         std::atomic<bool> new_twist_cmd_{false};
         moveit_servo::KinematicState last_servo_state_;

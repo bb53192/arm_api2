@@ -53,7 +53,7 @@ import os
 # TODO: Make this changeable without ERROR for wrong param type
 use_sim_time = True
 use_servo = True
-dt = 0.1
+dt = 0.02
 
 def get_moveit_configs(robot_name):
     """Load MoveIt configs for supported robots."""

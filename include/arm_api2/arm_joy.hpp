@@ -55,10 +55,11 @@
 #include "std_msgs/msg/bool.hpp"
 #include "sensor_msgs/msg/joy.hpp"
 #include "geometry_msgs/msg/twist_stamped.hpp"
+#include "trajectory_msgs/msg/joint_trajectory.hpp"
 
 //* srvs
 #include "std_srvs/srv/empty.hpp"
-#include "std_srvs/srv/trigger.hpp" 
+#include "std_srvs/srv/trigger.hpp"
 
 using namespace std::chrono_literals; 
 using std::placeholders::_1; 
@@ -72,21 +73,33 @@ class JoyCtl: public rclcpp::Node
 	private:
 
 		// vars
-		bool 		enableJoy_; 
-		mutable int scale_factor;  
-        rclcpp::Clock clock_; 
-	    
-		// publishers	
-		rclcpp::Publisher<geometry_msgs::msg::TwistStamped>::SharedPtr cmdVelPub_; 
-		
-		// subscribers
-		rclcpp::Subscription<sensor_msgs::msg::Joy>::SharedPtr joySub_; 
+		bool 		enableJoy_;
+		mutable int scale_factor;
+        rclcpp::Clock clock_;
 
-		// clients 
+	    
+		// publishers
+		rclcpp::Publisher<geometry_msgs::msg::TwistStamped>::SharedPtr cmdVelPub_;
+
+		// subscribers
+		rclcpp::Subscription<sensor_msgs::msg::Joy>::SharedPtr joySub_;
+
+		// timer for fixed-rate republish
+		rclcpp::TimerBase::SharedPtr publish_timer_;
+		geometry_msgs::msg::TwistStamped last_twist_msg_;
+
+		// clients
  		rclcpp::Client<std_srvs::srv::Trigger>::SharedPtr  jingleBellsClient_; // Could be used for initing all UAVs
 
-		void init(); 
-		void joy_callback(const sensor_msgs::msg::Joy::SharedPtr msg); 
+		// gripper — direct JTC publish, no MoveIt planning
+		rclcpp::Publisher<trajectory_msgs::msg::JointTrajectory>::SharedPtr gripper_pub_;
+		float gripper_pos_    = 0.0f;
+		bool  trig_open_held_ = false;
+		bool  trig_close_held_= false;
+
+		void init();
+		void joy_callback(const sensor_msgs::msg::Joy::SharedPtr msg);
+		void publish_timer_cb(); 
 
 		// Setting them as const to be usable by joy_callback which is also const
 		void setScaleFactor(int value); 

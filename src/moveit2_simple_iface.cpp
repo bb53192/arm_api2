@@ -200,6 +200,7 @@ void m2SimpleIface::joint_state_cb(const sensor_msgs::msg::JointState::SharedPtr
 void m2SimpleIface::servo_twist_cb(const geometry_msgs::msg::TwistStamped::SharedPtr msg)
 {
     latest_twist_cmd_ = *msg;
+    last_twist_cmd_time_ = this->now();
     new_twist_cmd_ = true;
     RCLCPP_DEBUG_STREAM(this->get_logger(),
         "servo_twist_cb: lin=[" << msg->twist.linear.x << ", " << msg->twist.linear.y << ", " << msg->twist.linear.z
@@ -214,18 +215,19 @@ void m2SimpleIface::processServoCommand()
         new_twist_cmd_.load() ? "true" : "false",
         m_moveGroupPtr ? "OK" : "NULL");
 
-    if (!servoPtr || !new_twist_cmd_ || !m_moveGroupPtr) return;
+    if (!servoPtr || !m_moveGroupPtr) return;
 
     // Ignore commands for 0.5s after entering servo mode to flush buffered inputs
     double time_since_entry = (this->now() - servo_entered_time_).seconds();
     if (time_since_entry < 0.5) {
         RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 200,
             "Servo warmup: %.2fs / 0.50s elapsed, discarding command", time_since_entry);
-        new_twist_cmd_ = false;
         return;
     }
 
-    new_twist_cmd_ = false;
+    // Stop if no fresh command has arrived recently (joystick released / topic stopped)
+    double cmd_age = (this->now() - last_twist_cmd_time_).seconds();
+    if (cmd_age > 0.25) return;
 
     RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 500,
         "Servo twist: lin=[%.4f %.4f %.4f] ang=[%.4f %.4f %.4f] frame=%s",
@@ -257,7 +259,7 @@ void m2SimpleIface::processServoCommand()
 
         RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 500,
             "Servo: calling getCurrentState...");
-        auto current_state = m_moveGroupPtr->getCurrentState(1.0);
+        auto current_state = m_moveGroupPtr->getCurrentState(0.05);
         if (!current_state) {
             RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
                 "Servo: could not get current robot state");

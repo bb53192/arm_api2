@@ -64,6 +64,27 @@ def get_moveit_configs(robot_name):
         from moveit_configs_utils import MoveItConfigsBuilder
         moveit_config = MoveItConfigsBuilder("piper", package_name="piper_with_gripper_moveit").to_moveit_configs()
         return moveit_config.to_dict()
+    elif robot_name == "crx":
+        import os
+        from ament_index_python.packages import get_package_share_directory
+        from moveit_configs_utils import MoveItConfigsBuilder
+        pkg = get_package_share_directory("ros_plc_sim")
+        moveit_config = (
+            MoveItConfigsBuilder("crx10ia", package_name="ros_plc_sim")
+            .robot_description(
+                file_path=os.path.join(pkg, "urdf", "crx10ia_robotiq_gz.urdf.xacro"),
+                mappings={
+                    "simulation_controllers": os.path.join(pkg, "config", "ros2_controllers_gripper.yaml"),
+                    "use_robotiq_gripper": "true",
+                },
+            )
+            .robot_description_semantic(file_path="srdf/crx10ia_robotiq.srdf")
+            .robot_description_kinematics(file_path="config/moveit/kinematics.yaml")
+            .joint_limits(file_path="config/moveit/joint_limits.yaml")
+            .planning_pipelines(pipelines=["ompl"])
+            .to_moveit_configs()
+        )
+        return moveit_config.to_dict()
     return {}
 
 def launch_setup(context, *args, **kwargs):

@@ -1,0 +1,64 @@
+###############################################
+# Servo config for r2000ic_125l on the rail cell.
+# Not actively driven yet (arm_api2 initializes servo unconditionally), but
+# moveit2_iface crashes on startup without these params, so this must exist.
+###############################################
+
+override_velocity_scaling_factor: 1.0
+
+publish_period: 0.01
+low_latency_mode: false
+
+command_in_type: speed_units
+scale:
+  linear: 0.2
+  rotational: 0.4
+  joint: 0.3
+
+command_out_type: trajectory_msgs/JointTrajectory
+
+publish_joint_positions: true
+publish_joint_velocities: false
+publish_joint_accelerations: false
+
+use_smoothing: true
+smoothing_filter_plugin_name: online_signal_smoothing::ButterworthFilterPlugin
+butterworth_filter_order: 2
+butterworth_low_pass_filter_coeff: 30.0
+
+is_primary_planning_scene_monitor: false
+check_octomap_collisions: false
+
+## MoveIt properties
+move_group_name: manipulator
+planning_frame: world
+
+## Other frames
+ee_frame_name: tcp
+robot_link_command_frame: world
+
+## Stopping behaviour
+incoming_command_timeout: 0.1
+num_outgoing_halt_msgs_to_publish: 4
+
+## Singularity / joint limit handling
+lower_singularity_threshold: 50.0
+hard_stop_singularity_threshold: 100.0
+leaving_singularity_threshold_multiplier: 2.0
+joint_limit_margin: 0.1
+
+## Topic names
+cartesian_command_in_topic: /moveit2_iface_node/delta_twist_cmds
+joint_command_in_topic: /moveit2_iface_node/delta_joint_cmds
+joint_topic: /joint_states
+status_topic: ~/status
+command_out_topic: /arm_controller/joint_trajectory
+
+## Collision checking
+check_collisions: true
+collision_check_rate: 10.0
+collision_check_type: threshold_distance
+self_collision_proximity_threshold: 0.01
+scene_collision_proximity_threshold: 0.02
+collision_distance_safety_factor: 10.0
+min_allowable_collision_distance: 0.025

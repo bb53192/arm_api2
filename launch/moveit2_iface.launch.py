@@ -98,11 +98,31 @@ def launch_setup(context, *args, **kwargs):
     if servo_params:
         node_params.append(servo_params)
 
+    arg_servo_twist_topic = context.perform_substitution(
+        LaunchConfiguration('servo_twist_topic', default='/moveit2_iface_node/delta_twist_cmds'))
+    arg_servo_trajectory_topic = context.perform_substitution(
+        LaunchConfiguration('servo_trajectory_topic',
+                            default='/joint_trajectory_controller/joint_trajectory'))
+
     launch_move_group = Node(
         package='arm_api2',
         executable='moveit2_iface',
         output='screen',
-        parameters=node_params
+        parameters=node_params,
+        # moveit2_iface.cpp hardcodes both the servo twist subscriber
+        # ("~/servo_twist_cmd") and the servo trajectory publisher
+        # ("/joint_trajectory_controller/joint_trajectory") rather than
+        # reading them from config. The twist default here matches
+        # servo_keyboard_input.cpp's own hardcoded publish topic so the
+        # bundled keyboard teleop works out of the box; the trajectory
+        # default preserves prior behavior for robots whose controller is
+        # actually named "joint_trajectory_controller" -- override both via
+        # the servo_twist_topic/servo_trajectory_topic launch args for
+        # robots (like ours) whose controller has a different name.
+        remappings=[
+            ('~/servo_twist_cmd', arg_servo_twist_topic),
+            ('/joint_trajectory_controller/joint_trajectory', arg_servo_trajectory_topic),
+        ],
     )
 
     launch_nodes_.append(launch_move_group)
@@ -154,9 +174,27 @@ def generate_launch_description():
     )
 
     declared_arguments.append(
-        DeclareLaunchArgument(name='use_sim_time', 
-                              default_value='false', 
+        DeclareLaunchArgument(name='use_sim_time',
+                              default_value='false',
                               description='use simulation time')
+    )
+
+    declared_arguments.append(
+        DeclareLaunchArgument(
+            name='servo_twist_topic',
+            default_value='/moveit2_iface_node/delta_twist_cmds',
+            description="Remap target for moveit2_iface's hardcoded '~/servo_twist_cmd' "
+                        "subscriber. Default matches servo_keyboard_input.cpp's own "
+                        "hardcoded publish topic.")
+    )
+
+    declared_arguments.append(
+        DeclareLaunchArgument(
+            name='servo_trajectory_topic',
+            default_value='/joint_trajectory_controller/joint_trajectory',
+            description="Remap target for moveit2_iface's hardcoded servo trajectory "
+                        "output topic. Override to match your controller's actual "
+                        "action/topic namespace, e.g. /arm_controller/joint_trajectory.")
     )
 
     return LaunchDescription(declared_arguments + [OpaqueFunction(function=launch_setup)])
